@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"crypto/tls"
 	"net"
+	"shiny_redis/parser"
+	"strings"
 	"sync"
 )
 
@@ -11,12 +13,12 @@ import (
 type Callback func(*Peer, string, ...string) bool
 type Cmd func(c *Peer, cmd string, args []string)
 type Peer struct {
-	writer       *bufio.Writer
-	closed       bool
-	Resp3        bool
-	Ctx          interface{} // anything goes, server won't touch this
-	onDisconnect []func()    // list of callbacks
-	mu           sync.Mutex  // for Block()
+	writer    *bufio.Writer
+	closed    bool
+	Resp3     bool
+	Ctx       interface{} // anything goes, server won't touch this
+	DisconnCB []func()    // list of callbacks
+	mu        sync.Mutex  // for Block()
 }
 
 type Server struct {
@@ -27,7 +29,7 @@ type Server struct {
 	mu        sync.Mutex
 	wg        sync.WaitGroup
 	infoConns int
-	infoCmds  int
+	CmdCnt    int
 }
 
 // NewServer makes a server listening on addr. Close with .Close().
@@ -99,4 +101,76 @@ func (s *Server) ServeConn(conn net.Conn) {
 		delete(s.peers, conn)
 		s.mu.Unlock()
 	}()
+}
+
+func (s *Server) servePeer(c net.Conn) {
+	r := bufio.NewReader(c)
+	peer := &Peer{
+		writer: bufio.NewWriter(c),
+	}
+	defer func() {
+		for _, f := range peer.DisconnCB {
+			f()
+		}
+	}()
+
+	for {
+		args, err := parser.ReadArray(r)
+		if err != nil {
+			return
+		}
+		s.Dispatch(peer, args)
+		peer.Flush()
+
+		s.mu.Lock()
+		closed := peer.closed
+		s.mu.Unlock()
+		if closed {
+			c.Close()
+		}
+	}
+}
+
+func (s *Server) Dispatch(c *Peer, args []string) {
+	cmd, args := args[0], args[1:]
+	cmdUp := strings.ToUpper(cmd)
+	s.mu.Lock()
+	h := s.preHook
+	s.mu.Unlock()
+	if h != nil {
+		if h(c, cmdUp, args...) {
+			return
+		}
+	}
+
+	s.mu.Lock()
+	cb, ok := s.cmds[cmdUp]
+	s.mu.Unlock()
+	if !ok {
+		//todo
+		return
+	}
+
+	s.mu.Lock()
+	s.CmdCnt++
+	s.mu.Unlock()
+	cb(c, cmdUp, args)
+}
+
+func (c *Peer) Flush() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.writer.Flush()
+}
+
+func (c *Peer) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+}
+
+func (s *Server) TotalCommands() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.CmdCnt
 }
