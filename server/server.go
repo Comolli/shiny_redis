@@ -3,15 +3,19 @@ package server
 import (
 	"bufio"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"shiny_redis/parser"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 // Hook is can be added to run before every cmd. Return true if the command is done.
 type Callback func(*Peer, string, ...string) bool
 type Cmd func(c *Peer, cmd string, args []string)
+
+//client
 type Peer struct {
 	writer    *bufio.Writer
 	closed    bool
@@ -21,6 +25,7 @@ type Peer struct {
 	mu        sync.Mutex  // for Block()
 }
 
+//server
 type Server struct {
 	listener  net.Listener
 	cmds      map[string]Cmd
@@ -173,4 +178,46 @@ func (s *Server) TotalCommands() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.CmdCnt
+}
+
+func (s *Server) Register(cmd string, f Cmd) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cmd = strings.ToUpper(cmd)
+	if _, ok := s.cmds[cmd]; ok {
+		return fmt.Errorf("command already registered: %s", cmd)
+	}
+	s.cmds[cmd] = f
+	return nil
+}
+
+// A Writer is given to the callback in Block()
+type Writer struct {
+	w     *bufio.Writer
+	resp3 bool
+}
+
+func (c *Peer) WriteInline(s string) {
+	c.Block(func(w *Writer) {
+		w.WriteInline(s)
+	})
+}
+
+func (c *Peer) Block(fn func(*Writer)) {
+	fn(&Writer{c.writer, c.Resp3})
+}
+
+// WriteInline writes a redis inline string
+func (w *Writer) WriteInline(s string) {
+	fmt.Fprintf(w.w, "+%s\r\n", toInline(s))
+}
+
+//formattting string
+func toInline(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return ' '
+		}
+		return r
+	}, s)
 }
