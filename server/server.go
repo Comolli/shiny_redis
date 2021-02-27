@@ -140,10 +140,10 @@ func (s *Server) Dispatch(c *Peer, args []string) {
 	cmd, args := args[0], args[1:]
 	cmdUp := strings.ToUpper(cmd)
 	s.mu.Lock()
-	h := s.preHook
+	fn := s.preHook
 	s.mu.Unlock()
-	if h != nil {
-		if h(c, cmdUp, args...) {
+	if fn != nil {
+		if fn(c, cmdUp, args...) {
 			return
 		}
 	}
@@ -220,4 +220,27 @@ func toInline(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// WriteError writes a redis 'Error'
+func (c *Peer) WriteError(e string) {
+	c.Block(func(w *Writer) {
+		w.WriteError(e)
+	})
+}
+
+func (w *Writer) WriteError(e string) {
+	fmt.Fprintf(w.w, "-%s\r\n", toInline(e))
+}
+
+// WriteBulk writes a bulk string
+func (c *Peer) WriteBulk(s string) {
+	c.Block(func(w *Writer) {
+		w.WriteBulk(s)
+	})
+}
+
+// WriteBulk writes a bulk string
+func (w *Writer) WriteBulk(s string) {
+	fmt.Fprintf(w.w, "$%d\r\n%s\r\n", len(s), s)
 }

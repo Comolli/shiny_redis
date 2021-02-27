@@ -13,6 +13,7 @@ type ShinyRedis struct {
 	Srv         *server.Server
 	Port        int
 	Passwords   map[string]string // username password
+	Dbs         map[int]*RedisDB
 	Scripts     map[string]string // sha1 -> lua src
 	Signal      *sync.Cond
 	Now         time.Time // time.Now() if not set.

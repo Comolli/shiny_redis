@@ -40,8 +40,8 @@ func (m *ShinyRedis) cmdBlpop(c *server.Peer, cmd string, args []string) {
 
 func (m *ShinyRedis) cmdBXpop(c *server.Peer, cmd string, args []string, lr leftright) {
 	if len(args) < 2 {
-		setDirty(c)
-		c.WriteError(errWrongNumber(cmd))
+		//setDirty(c)
+		c.WriteError("errWrongNumber(cmd)")
 		return
 	}
 	//todo
@@ -53,17 +53,20 @@ func (m *ShinyRedis) cmdBXpop(c *server.Peer, cmd string, args []string, lr left
 
 	timeout, err := strconv.Atoi(timeoutS)
 	if err != nil {
-		setDirty(c)
-		c.WriteError(msgInvalidTimeout)
+		//setDirty(c)
+		//c.WriteError(msgInvalidTimeout)
 		return
 	}
 	if timeout < 0 {
-		setDirty(c)
-		c.WriteError(msgNegTimeout)
+		//setDirty(c)
+		//c.WriteError(msgNegTimeout)
 		return
 	}
 
-	blocking(m, c, time.Duration(timeout)*time.Second,
+	blocking(
+		m,
+		c,
+		time.Duration(timeout)*time.Second,
 		func(c *server.Peer, ctx *connCtx) bool {
 			db := m.db(ctx.selectedDB)
 			for _, key := range keys {
@@ -71,15 +74,15 @@ func (m *ShinyRedis) cmdBXpop(c *server.Peer, cmd string, args []string, lr left
 					continue
 				}
 				if db.t(key) != "list" {
-					c.WriteError(msgWrongType)
+					c.WriteError("msgWrongType")
 					return true
 				}
 
 				if len(db.listKeys[key]) == 0 {
 					continue
 				}
-				c.WriteLen(2)
-				c.WriteBulk(key)
+				//c.WriteLen(2)
+				//c.WriteBulk(key)
 				var v string
 				switch lr {
 				case left:
@@ -94,7 +97,7 @@ func (m *ShinyRedis) cmdBXpop(c *server.Peer, cmd string, args []string, lr left
 		},
 		func(c *server.Peer) {
 			// timeout
-			c.WriteLen(-1)
+			c.WriteBulk("timeout")
 		},
 	)
 }
