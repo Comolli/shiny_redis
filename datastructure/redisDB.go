@@ -172,10 +172,6 @@ func addTxCmd(ctx *connCtx, cb txCmd) {
 	ctx.transaction = append(ctx.transaction, cb)
 }
 
-func inTx(ctx *connCtx) bool {
-	return ctx.transaction != nil
-}
-
 func getCtx(c *server.Peer) *connCtx {
 	if c.Ctx == nil {
 		c.Ctx = &connCtx{}
