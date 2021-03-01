@@ -17,7 +17,7 @@ const (
 func CommandsList(m *ShinyRedis) {
 	//Time complexity: O(1)
 	m.Srv.Register("BLPOP", m.cmdBlpop)
-	//m.srv.Register("BRPOP", m.cmdBrpop)
+	m.Srv.Register("BRPOP", m.cmdBrpop)
 	//m.srv.Register("BRPOPLPUSH", m.cmdBrpoplpush)
 	//m.srv.Register("LINDEX", m.cmdLindex)
 	//m.srv.Register("LINSERT", m.cmdLinsert)
@@ -36,6 +36,10 @@ func CommandsList(m *ShinyRedis) {
 }
 func (m *ShinyRedis) cmdBlpop(c *server.Peer, cmd string, args []string) {
 	m.cmdBXpop(c, cmd, args, left)
+}
+
+func (m *ShinyRedis) cmdBrpop(c *server.Peer, cmd string, args []string) {
+	m.cmdBXpop(c, cmd, args, right)
 }
 
 func (m *ShinyRedis) cmdBXpop(c *server.Peer, cmd string, args []string, lr leftright) {
@@ -94,6 +98,60 @@ func (m *ShinyRedis) cmdBXpop(c *server.Peer, cmd string, args []string, lr left
 				return true
 			}
 			return false
+		},
+		func(c *server.Peer) {
+			// timeout
+			c.WriteBulk("timeout")
+		},
+	)
+}
+
+func (m *ShinyRedis) cmdBrpoplpush(c *server.Peer, cmd string, args []string, lr leftright) {
+	if len(args) != 3 {
+		//setDirty(c)
+		c.WriteError("errWrongNumber(cmd)")
+		return
+	}
+	//todo
+	//handleAuth
+	//checkpub
+
+	src := args[0]
+	dst := args[1]
+
+	timeout, err := strconv.Atoi(args[2])
+	if err != nil {
+		//setDirty(c)
+		//c.WriteError(msgInvalidTimeout)
+		return
+	}
+	if timeout < 0 {
+		//setDirty(c)
+		//c.WriteError(msgNegTimeout)
+		return
+	}
+
+	blocking(
+		m,
+		c,
+		time.Duration(timeout)*time.Second,
+		func(c *server.Peer, ctx *connCtx) bool {
+			db := m.db(ctx.selectedDB)
+
+			if !db.exists(src) {
+				return false
+			}
+			if db.t(src) != "list" || (db.exists(dst) && db.t(dst) != "list") {
+				c.WriteError("msgWrongType")
+				return true
+			}
+			if len(db.listKeys[src]) == 0 {
+				return false
+			}
+			elem := db.listPop(src)
+			db.listLpush(dst, elem)
+			c.WriteBulk(elem)
+			return true
 		},
 		func(c *server.Peer) {
 			// timeout

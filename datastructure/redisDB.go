@@ -2,6 +2,7 @@ package datastructure
 
 import (
 	"shiny_redis/server"
+	"sync"
 	"time"
 )
 
@@ -83,8 +84,12 @@ func blocking(
 	fn blockCmd,
 	onTimeout func(*server.Peer),
 ) {
+	var (
+		ctx = getCtx(c)
+		dl  *time.Timer
+		dlc <-chan time.Time
+	)
 
-	ctx := getCtx(c)
 	if inTx(ctx) {
 		addTxCmd(ctx, func(c *server.Peer, ctx *connCtx) {
 			if !fn(c, ctx) {
@@ -93,6 +98,44 @@ func blocking(
 			c.WriteInline("QUEUED")
 			return
 		})
+	}
+	if timeout != 0 {
+		dl = time.NewTimer(timeout)
+		defer dl.Stop()
+		dlc = dl.C
+	}
+	m.Lock()
+	defer m.Unlock()
+	for {
+		done := fn(c, ctx)
+		if done {
+			return
+		}
+		// there is no cond.WaitTimeout(), so hence the the goroutine to wait
+		// for a timeout
+		var (
+			wg     sync.WaitGroup
+			wakeup = make(chan struct{}, 1)
+		)
+		wg.Add(1)
+		go func() {
+			m.Signal.Wait()
+			wakeup <- struct{}{}
+			wg.Done()
+		}()
+		select {
+		case <-wakeup:
+		case <-dlc:
+			onTimeout(c)
+			m.Signal.Broadcast() // to kill the wakeup go routine
+			wg.Wait()
+			return
+		case <-m.Ctx.Done():
+			m.Signal.Broadcast() // to kill the wakeup go routine
+			wg.Wait()
+			return
+		}
+		wg.Wait()
 	}
 
 }
@@ -124,6 +167,18 @@ func (db *RedisDB) listLpop(k string) string {
 	}
 	db.keyVersion[k]++
 	return el
+}
+
+// listLpush is 'left push', aka unshift. Returns the new length.
+func (db *RedisDB) listLpush(k, v string) int {
+	l, ok := db.listKeys[k]
+	if !ok {
+		db.keys[k] = "list"
+	}
+	l = append([]string{v}, l...)
+	db.listKeys[k] = l
+	db.keyVersion[k]++
+	return len(l)
 }
 
 func (db *RedisDB) listPop(k string) string {
