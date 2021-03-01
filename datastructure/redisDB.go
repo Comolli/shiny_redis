@@ -74,6 +74,34 @@ func (db *RedisDB) t(k string) string {
 	return db.keys[k]
 }
 
+// withTx wraps the non-argument-checking part of command handling code in
+// transaction logic.
+func withTx(
+	m *ShinyRedis,
+	c *server.Peer,
+	fn txCmd,
+) {
+	ctx := getCtx(c)
+
+	if ctx.nested {
+		// this is a call via Lua's .call(). It's already locked.
+		fn(c, ctx)
+		m.signal.Broadcast()
+		return
+	}
+
+	if inTx(ctx) {
+		addTxCmd(ctx, fn)
+		c.WriteInline("QUEUED")
+		return
+	}
+	m.Lock()
+	fn(c, ctx)
+	// done, wake up anyone who waits on anything.
+	m.signal.Broadcast()
+	m.Unlock()
+}
+
 // blockCmd is executed returns whether it is done
 type blockCmd func(*server.Peer, *connCtx) bool
 
@@ -119,7 +147,7 @@ func blocking(
 		)
 		wg.Add(1)
 		go func() {
-			m.Signal.Wait()
+			m.signal.Wait()
 			wakeup <- struct{}{}
 			wg.Done()
 		}()
@@ -127,11 +155,11 @@ func blocking(
 		case <-wakeup:
 		case <-dlc:
 			onTimeout(c)
-			m.Signal.Broadcast() // to kill the wakeup go routine
+			m.signal.Broadcast() // to kill the wakeup go routine
 			wg.Wait()
 			return
 		case <-m.Ctx.Done():
-			m.Signal.Broadcast() // to kill the wakeup go routine
+			m.signal.Broadcast() // to kill the wakeup go routine
 			wg.Wait()
 			return
 		}
